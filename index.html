@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>분자 3D 뷰어</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Apple SD Gothic Neo',sans-serif;background:#f0f4f8;color:#222;}
+.wrap{max-width:680px;margin:0 auto;padding:1.2rem;}
+.hdr{text-align:center;margin-bottom:1.2rem;}
+.hdr h1{font-size:20px;font-weight:700;color:#1a2a4a;margin-bottom:4px;}
+.hdr p{font-size:13px;color:#777;}
+
+.mol-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-bottom:1.2rem;}
+.mol-btn{background:#fff;border:1px solid #dde4ef;border-radius:10px;padding:9px 6px;cursor:pointer;text-align:center;transition:all .15s;}
+.mol-btn:hover{background:#f0f7ff;border-color:#93c5fd;}
+.mol-btn.active{border:2px solid #3b82f6;background:#dbeafe;}
+.mol-btn .fm{font-size:14px;font-weight:700;color:#1a2a4a;margin-bottom:2px;}
+.mol-btn .tag{display:inline-block;font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;margin-top:2px;}
+.tag-3d{background:#ede9fe;color:#5b21b6;}
+.tag-2d{background:#d1fae5;color:#065f46;}
+
+.viewer{background:#fff;border:1px solid #dde4ef;border-radius:14px;padding:1rem;display:flex;flex-direction:column;align-items:center;}
+.viewer-top{display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:.6rem;}
+.mol-info-name{font-size:18px;font-weight:700;color:#1a2a4a;}
+.mol-info-sub{font-size:12px;color:#888;margin-top:2px;}
+.shape-badge{font-size:13px;font-weight:700;padding:4px 14px;border-radius:20px;}
+.badge-3d{background:#ede9fe;color:#5b21b6;}
+.badge-2d{background:#d1fae5;color:#065f46;}
+
+#canvasWrap{position:relative;width:100%;}
+canvas{width:100%;border-radius:10px;border:1px solid #e4ebf5;background:#f4f7fb;display:block;cursor:grab;}
+canvas:active{cursor:grabbing;}
+#labelLayer{position:absolute;top:0;left:0;pointer-events:none;overflow:hidden;}
+.atom-label{
+  position:absolute;transform:translate(-50%,-50%);font-weight:700;color:#fff;
+  text-shadow:-1px -1px 0 rgba(0,0,0,.85),1px -1px 0 rgba(0,0,0,.85),
+    -1px 1px 0 rgba(0,0,0,.85),1px 1px 0 rgba(0,0,0,.85),0 0 6px rgba(0,0,0,.5);
+  white-space:nowrap;pointer-events:none;line-height:1;
+}
+.atom-label.dark{color:#111;
+  text-shadow:-1px -1px 0 rgba(255,255,255,.9),1px -1px 0 rgba(255,255,255,.9),
+    -1px 1px 0 rgba(255,255,255,.9),1px 1px 0 rgba(255,255,255,.9);}
+
+.hint{font-size:11px;color:#bbb;margin-top:.5rem;}
+
+.reason-box{margin-top:.9rem;width:100%;background:#f8fafc;border:1px solid #e4ebf5;border-radius:10px;padding:.75rem 1rem;}
+.reason-box p{font-size:13px;color:#444;line-height:1.7;}
+.reason-box strong{font-weight:700;color:#1a2a4a;}
+
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:.7rem;justify-content:center;}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:12px;color:#666;}
+.leg-dot{width:11px;height:11px;border-radius:50%;border:1px solid rgba(0,0,0,.15);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hdr">
+    <h1>분자 3D 구조 뷰어</h1>
+    <p>분자를 선택하고 드래그하여 입체 구조를 확인하세요</p>
+  </div>
+
+  <div class="mol-grid" id="molGrid"></div>
+
+  <div class="viewer">
+    <div class="viewer-top">
+      <div>
+        <div class="mol-info-name" id="infoFormula"></div>
+        <div class="mol-info-sub" id="infoName"></div>
+      </div>
+      <span class="shape-badge" id="shapeBadge"></span>
+    </div>
+    <div id="canvasWrap">
+      <canvas id="canvas" height="320"></canvas>
+      <div id="labelLayer"></div>
+    </div>
+    <p class="hint">드래그: 회전 &nbsp;|&nbsp; 스크롤: 확대·축소</p>
+    <div class="reason-box"><p id="reasonText"></p></div>
+    <div class="legend" id="legend"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const D2R = Math.PI/180;
+const RADII = {O:.66, F:.57, N:.71, Cl:.99};
+function R(el){ return (RADII[el]||0.75)*0.88; }
+
+/*
+  OF2  : O 중심, F 2개, 굽은형(103.2°), 비공유2 → 입체형
+  O2F2 : F-O-O-F, O-O 단일결합+각 O에 F, 비틀린 구조 → 입체형
+  NCl3 : N 중심, Cl 3개, 삼각뿔형(107°), 비공유1 → 입체형
+  N2Cl2: Cl-N=N-Cl, 이중결합, cis 형태 → 평면형
+  N2Cl4: Cl2N-NCl2, N-N 단일결합, 각 N에 Cl 2개+비공유1
+          → N 주위 사면체 배치 → 입체형(비틀림)
+*/
+
+const MOLS = [
+  {
+    formula:'OF₂', name:'이플루오린화산소', is3d:true,
+    reason:'<strong>입체형.</strong> O가 중심원자. 결합쌍 2 + 비공유 전자쌍 2 → sp³ 혼성. 굽은형(103.2°)이지만 비공유 전자쌍이 평면 위아래로 존재하여 입체적 구조.',
+    atoms:[
+      {el:'O', color:0xff3333, x:0,    y:0,    z:0},
+      {el:'F', color:0x00aaaa, x: 1.65*Math.sin(103.2/2*D2R), y:-1.65*Math.cos(103.2/2*D2R), z:0},
+      {el:'F', color:0x00aaaa, x:-1.65*Math.sin(103.2/2*D2R), y:-1.65*Math.cos(103.2/2*D2R), z:0},
+    ],
+    bonds:[[0,1],[0,2]]
+  },
+  {
+    formula:'O₂F₂', name:'이플루오린화이산소', is3d:true,
+    reason:'<strong>입체형.</strong> F–O–O–F 구조. 각 O는 sp³ 혼성(결합쌍 2 + 비공유 2). O–O 결합 주위로 두 F가 서로 비틀린(gauche) 입체 배치. H₂O₂와 유사한 구조.',
+    atoms:[
+      {el:'O', color:0xff3333, x:-0.7, y: 0.5,  z: 0.5},
+      {el:'O', color:0xff3333, x: 0.7, y: 0.5,  z:-0.5},
+      {el:'F', color:0x00aaaa, x:-1.6, y:-0.5, z: 0.2},
+      {el:'F', color:0x00aaaa, x: 1.6, y:-0.5,  z:-0.2},
+    ],
+    bonds:[[0,1],[0,2],[1,3]]
+  },
+  {
+    formula:'NCl₃', name:'삼염화질소', is3d:true,
+    reason:'<strong>입체형.</strong> N이 중심원자. 결합쌍 3 + 비공유 전자쌍 1 → sp³ 혼성. 삼각뿔형(107°). NH₃와 동일한 구조 유형.',
+    atoms:[
+      {el:'N',  color:0x3377ee, x:0,     y: 0.3,  z:0},
+      {el:'Cl', color:0x22bb44, x: 1.55, y:-0.75, z:0},
+      {el:'Cl', color:0x22bb44, x:-0.78, y:-0.75, z: 1.35},
+      {el:'Cl', color:0x22bb44, x:-0.78, y:-0.75, z:-1.35},
+    ],
+    bonds:[[0,1],[0,2],[0,3]]
+  },
+  {
+    formula:'N₂Cl₂', name:'이염화이질소', is3d:false,
+    reason:'<strong>평면형.</strong> Cl–N=N–Cl 구조. N=N 이중결합으로 인해 회전 불가. 각 N은 sp² 혼성(이중결합+단일결합+비공유1). 모든 원자가 같은 평면에 위치.',
+    atoms:[
+      {el:'N',  color:0x3377ee, x:-0.65, y:0, z:0},
+      {el:'N',  color:0x3377ee, x: 0.65, y:0, z:0},
+      {el:'Cl', color:0x22bb44, x:-1.9,  y:0, z: 1.7},
+      {el:'Cl', color:0x22bb44, x: 1.9,  y:0, z:-1.7},
+    ],
+    bonds:[[0,1],[0,2],[1,3]],
+    doubleBonds:[[0,1]]
+  },
+  {
+    formula:'N₂Cl₄', name:'사염화이질소', is3d:true,
+    reason:'<strong>입체형.</strong> Cl₂N–NCl₄ 구조. N–N 단일결합이므로 회전 가능. 각 N은 결합쌍 3 + 비공유 1 → sp³ 혼성(삼각뿔형). 두 NCl₂ 단위가 N–N 결합 주위로 비틀린 입체 구조.',
+    atoms:[
+      {el:'N',  color:0x3377ee, x:-0.75, y: 0.3,  z: 0.2},
+      {el:'N',  color:0x3377ee, x: 0.75, y: 0.3,  z:-0.2},
+      {el:'Cl', color:0x22bb44, x:-1.9,  y:-0.6,  z: 1.1},
+      {el:'Cl', color:0x22bb44, x:-1.6,  y:-0.1,  z:-1.4},
+      {el:'Cl', color:0x22bb44, x: 1.9,  y:-0.6,  z:-1.1},
+      {el:'Cl', color:0x22bb44, x: 1.6,  y:-0.1,  z: 1.4},
+    ],
+    bonds:[[0,1],[0,2],[0,3],[1,4],[1,5]]
+  },
+];
+
+/* ── 버튼 ── */
+const grid = document.getElementById('molGrid');
+MOLS.forEach((m,i) => {
+  const b = document.createElement('div');
+  b.className = 'mol-btn' + (i===0?' active':'');
+  const tagCls = m.is3d ? 'tag-3d' : 'tag-2d';
+  const tagTxt = m.is3d ? '입체형' : '평면형';
+  b.innerHTML = `<div class="fm">${m.formula}</div><span class="tag ${tagCls}">${tagTxt}</span>`;
+  b.onclick = () => select(i);
+  grid.appendChild(b);
+});
+
+/* ── Three.js ── */
+const canvas = document.getElementById('canvas');
+const labelLayer = document.getElementById('labelLayer');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setClearColor(0xf4f7fb, 1);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, .1, 100);
+camera.position.set(0, 0, 10);
+scene.add(new THREE.AmbientLight(0xffffff, .65));
+const dl = new THREE.DirectionalLight(0xffffff, .8); dl.position.set(5,8,5); scene.add(dl);
+const dl2 = new THREE.DirectionalLight(0xaaccff, .3); dl2.position.set(-5,-3,-3); scene.add(dl2);
+
+let molGroup=null, isDrag=false, lx=0, ly=0, rotX=.25, rotY=.4, scl=1;
+let atomData=[];
+
+function cyl(a, b, col, rad){
+  const s=new THREE.Vector3(a.x,a.y,a.z), e=new THREE.Vector3(b.x,b.y,b.z);
+  const d=new THREE.Vector3().subVectors(e,s), len=d.length();
+  const mid=new THREE.Vector3().addVectors(s,e).multiplyScalar(.5);
+  const g=new THREE.CylinderGeometry(rad,rad,len,16);
+  const mesh=new THREE.Mesh(g, new THREE.MeshPhongMaterial({color:col,shininess:40}));
+  mesh.position.copy(mid);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), d.normalize());
+  return mesh;
+}
+
+function buildMol(mol){
+  if(molGroup) scene.remove(molGroup);
+  molGroup = new THREE.Group();
+  atomData = [];
+
+  mol.bonds.forEach(([i,j]) => {
+    const a=mol.atoms[i], b=mol.atoms[j];
+    const isD = mol.doubleBonds && mol.doubleBonds.some(t=>(t[0]===i&&t[1]===j)||(t[0]===j&&t[1]===i));
+    if(isD){
+      const dir=new THREE.Vector3(b.x-a.x,b.y-a.y,b.z-a.z).normalize();
+      const up=Math.abs(dir.dot(new THREE.Vector3(0,1,0)))<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1);
+      const perp=new THREE.Vector3().crossVectors(dir,up).normalize();
+      [-0.13,0.13].forEach(d=>{
+        const pa={x:a.x+perp.x*d,y:a.y+perp.y*d,z:a.z+perp.z*d};
+        const pb={x:b.x+perp.x*d,y:b.y+perp.y*d,z:b.z+perp.z*d};
+        molGroup.add(cyl(pa,pb,0xaaaaaa,.09));
+      });
+    } else {
+      molGroup.add(cyl(a,b,0xcccccc,.13));
+    }
+  });
+
+  mol.atoms.forEach(a => {
+    const r = R(a.el);
+    const geo = new THREE.SphereGeometry(r, 32, 32);
+    const mat = new THREE.MeshPhongMaterial({color:a.color, shininess:90, specular:0x444444});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(a.x, a.y, a.z);
+    molGroup.add(mesh);
+    atomData.push({localPos: new THREE.Vector3(a.x,a.y,a.z), el:a.el, color:a.color, r});
+  });
+
+  scene.add(molGroup);
+}
+
+function buildLabels(mol){
+  labelLayer.innerHTML = '';
+  mol.atoms.forEach(a => {
+    const div = document.createElement('div');
+    div.className = 'atom-label';
+    const rr=(a.color>>16)&0xff, gg=(a.color>>8)&0xff, bb=a.color&0xff;
+    if(rr*.299+gg*.587+bb*.114 > 140) div.classList.add('dark');
+    div.textContent = a.el;
+    div.style.fontSize = Math.max(12, Math.round(10+R(a.el)*9))+'px';
+    labelLayer.appendChild(div);
+  });
+}
+
+function updateLabels(){
+  if(!molGroup) return;
+  const cw=canvas.clientWidth, ch=canvas.clientHeight;
+  const lbls=labelLayer.querySelectorAll('.atom-label');
+  atomData.forEach((item,i)=>{
+    const wp=item.localPos.clone();
+    molGroup.localToWorld(wp);
+    const ndc=wp.clone().project(camera);
+    const px=(ndc.x*.5+.5)*cw, py=(-.5*ndc.y+.5)*ch;
+    if(lbls[i]){lbls[i].style.left=px+'px'; lbls[i].style.top=py+'px';}
+  });
+}
+
+function updateInfo(mol){
+  document.getElementById('infoFormula').textContent = mol.formula;
+  document.getElementById('infoName').textContent = mol.name;
+  const badge = document.getElementById('shapeBadge');
+  badge.textContent = mol.is3d ? '입체형' : '평면형';
+  badge.className = 'shape-badge ' + (mol.is3d ? 'badge-3d' : 'badge-2d');
+  document.getElementById('reasonText').innerHTML = mol.reason;
+
+  const leg = document.getElementById('legend');
+  leg.innerHTML = '';
+  const seen = {};
+  mol.atoms.forEach(a => { if(!seen[a.el]) seen[a.el]=a.color; });
+  Object.entries(seen).forEach(([el,c])=>{
+    const hex = '#'+c.toString(16).padStart(6,'0');
+    leg.innerHTML += `<div class="leg-item"><div class="leg-dot" style="background:${hex};"></div>${el}</div>`;
+  });
+}
+
+function resize(){
+  const w = document.getElementById('canvasWrap').clientWidth;
+  const h = Math.min(w*.75, 340);
+  renderer.setSize(w,h);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+  labelLayer.style.width = w+'px'; labelLayer.style.height = h+'px';
+}
+
+function select(i){
+  document.querySelectorAll('.mol-btn').forEach((b,j)=>b.classList.toggle('active',j===i));
+  buildMol(MOLS[i]); buildLabels(MOLS[i]); updateInfo(MOLS[i]);
+  rotX=.25; rotY=.4; scl=1;
+  resize();
+}
+
+window.addEventListener('resize', ()=>{ resize(); });
+
+canvas.addEventListener('mousedown',e=>{isDrag=true;lx=e.clientX;ly=e.clientY;});
+window.addEventListener('mousemove',e=>{
+  if(!isDrag||!molGroup)return;
+  rotY+=(e.clientX-lx)*.012; rotX+=(e.clientY-ly)*.012;
+  lx=e.clientX; ly=e.clientY;
+});
+window.addEventListener('mouseup',()=>isDrag=false);
+canvas.addEventListener('touchstart',e=>{isDrag=true;lx=e.touches[0].clientX;ly=e.touches[0].clientY;});
+canvas.addEventListener('touchmove',e=>{
+  if(!isDrag||!molGroup)return;
+  rotY+=(e.touches[0].clientX-lx)*.014; rotX+=(e.touches[0].clientY-ly)*.014;
+  lx=e.touches[0].clientX; ly=e.touches[0].clientY; e.preventDefault();
+},{passive:false});
+canvas.addEventListener('touchend',()=>isDrag=false);
+canvas.addEventListener('wheel',e=>{scl=Math.min(2.5,Math.max(.4,scl-e.deltaY*.001));e.preventDefault();},{passive:false});
+
+(function loop(){
+  requestAnimationFrame(loop);
+  if(molGroup){
+    if(!isDrag) rotY+=.005;
+    molGroup.rotation.x=rotX; molGroup.rotation.y=rotY; molGroup.scale.setScalar(scl);
+  }
+  renderer.render(scene,camera);
+  updateLabels();
+})();
+
+resize();
+select(0);
+</script>
+</body>
+</html>
