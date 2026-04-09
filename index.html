@@ -88,7 +88,7 @@ const RADII = {O:.66, F:.57, N:.71, Cl:.99};
 function R(el){ return (RADII[el]||0.75)*0.88; }
 
 /*
-  OF2  : O 중심, F 2개, 굽은형(103.2°), 비공유2 → 입체형
+  OF2  : O 중심, F 2개, 굽은형(103.2°), 비공유2 → 평면형
   O2F2 : F-O-O-F, O-O 단일결합+각 O에 F, 비틀린 구조 → 입체형
   NCl3 : N 중심, Cl 3개, 삼각뿔형(107°), 비공유1 → 입체형
   N2Cl2: Cl-N=N-Cl, 이중결합, cis 형태 → 평면형
@@ -98,8 +98,8 @@ function R(el){ return (RADII[el]||0.75)*0.88; }
 
 const MOLS = [
   {
-    formula:'OF₂', name:'이플루오린화산소', is3d:true,
-    reason:'<strong>입체형.</strong> O가 중심원자. 결합쌍 2 + 비공유 전자쌍 2 → sp³ 혼성. 굽은형(103.2°)이지만 비공유 전자쌍이 평면 위아래로 존재하여 입체적 구조.',
+    formula:'OF₂', name:'이플루오린화산소', is3d:false,
+    reason:'<strong>평면형.</strong> O가 중심원자. 결합쌍 2 + 비공유 전자쌍 2 → sp³ 혼성. 굽은형(103.2°)이며 O·F·F 세 원자가 모두 같은 평면에 위치.',
     atoms:[
       {el:'O', color:0xff3333, x:0,    y:0,    z:0},
       {el:'F', color:0x00aaaa, x: 1.65*Math.sin(103.2/2*D2R), y:-1.65*Math.cos(103.2/2*D2R), z:0},
